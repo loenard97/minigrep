@@ -1,97 +1,69 @@
-use std::{env, fs, error::Error};
+use std::fs;
+use std::io::{self, Read};
+use std::error::Error;
+use clap::Parser;
 
+mod print;
+mod search;
+
+#[derive(Parser)]
+#[command(author, version, about)]
+struct Args {
+    query: Option<String>,
+    file_name: Option<String>,
+    #[arg(short, long, default_value_t = true)]
+    case_sensitive: bool,
+    #[arg(short, long, default_value_t = false)]
+    pretty_print: bool,
+}
+
+#[derive(Clone)]
 pub struct Config {
-    pub query: String,
-    pub file_name: String,
+    pub query: Option<String>,
+    pub file_name: Option<String>,
     pub case_sensitive: bool,
+    pub pretty_print: bool,
+    pub stdin_as_input: bool,
 }
 
 impl Config {
-    pub fn new(args: &[String]) -> Result<Config, &'static str> {
-        if args.len() <= 2 {
-            return Err("not enough arguments")
-        }
+    pub fn new() -> Self {
+        let args = Args::parse();
 
-        let query = args[1].clone();
-        let file_name = args[2].clone();
-        let case_sensitive = env::var("CASE_INSENSITIVE").is_err();
+        let query = args.query.clone();
+        let file_name = args.file_name.clone();
+        let case_sensitive = args.case_sensitive;
+        let pretty_print = args.pretty_print;
+        let stdin_as_input = false;
 
-        Ok(Config { query, file_name, case_sensitive })
+        Config { query, file_name, case_sensitive, pretty_print, stdin_as_input }
     }
 }
 
 pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
-    let contents = fs::read_to_string(config.file_name)?;
+    let contents = fs::read_to_string(config.file_name.unwrap())?;
+    let mut results: Vec<&str> = Vec::new();
+    let mut buffer = String::new();
 
-    let results = if config.case_sensitive {
-        search(&config.query, &contents)
+    // query
+    if config.stdin_as_input {
+        let stdin = io::stdin();
+        stdin.lock().read_to_string(&mut buffer).expect("Could not read stdin.");
+        results.push(&buffer);
     } else {
-        search_case_insensitive(&config.query, &contents)
-    };
+        results = if config.case_sensitive {
+            search::case_sensitive(&config.query.unwrap(), &contents)
+        } else {
+            search::case_insensitive(&config.query.unwrap(), &contents)
+        };
+    }
 
-    for line in results {
-        println!("{}", line);
+    // print
+    if config.pretty_print {
+        print::pretty_print(results);
+    } else {
+        print::print(results);
     }
 
     Ok(())
-}
-
-pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
-    let mut results = Vec::new();
-
-    for line in contents.lines() {
-        if line.contains(query) {
-            results.push(line);
-        }
-    }
-
-    results
-}
-
-pub fn search_case_insensitive<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
-    let query = query.to_lowercase();
-    let mut results = Vec::new();
-
-    for line in contents.lines() {
-        if line.to_lowercase().contains(&query) {
-            results.push(line);
-        }
-    }
-
-    results
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn case_sensitive() {
-        let query = "duct";
-        let contents = "\
-Rust:
-safe, fast, productive.
-Pick three.
-Duct tape.";
-
-        assert_eq!(
-            vec!["safe, fast, productive."], 
-            search(query, contents)
-        );
-    }
-
-    #[test]
-    fn case_insensitive() {
-        let query = "rUsT";
-        let contents = "\
-Rust:
-safe, fast, productive.
-Pick three.
-Trust me.";
-
-        assert_eq!(
-            vec!["Rust:", "Trust me."], 
-            search_case_insensitive(query, contents)
-        );
-    }
 }
